@@ -69,28 +69,28 @@ class MultSpaceattention(nn.Module):
         self.num_of_hour = num_of_hour
         self.linear = nn.Sequential(
             nn.Linear(n_heads * d_v, num_of_hour),
-            nn.Dropout(p=0.1)
+            # nn.Dropout(p=0.1)
         )
-        self.dropout = nn.Dropout(p=0.1)
+        # self.dropout = nn.Dropout(p=0.1)
 
     def forward(self, x, sp_W_Q_params, sp_W_K_params, sp_W_V_params):
         """
         :param x: B, N, d_model
-        :param sp_W_Q_params:B, d_model * n_heads * d_k
-        :param sp_W_K_params:B, d_model * n_heads * d_k
-        :param sp_W_V_params:B, d_model * n_heads * d_v
+        :param sp_W_Q_params:B, N, d_model * n_heads * d_k
+        :param sp_W_K_params:B, N, d_model * n_heads * d_k
+        :param sp_W_V_params:B, N, d_model * n_heads * d_v
         :return:B, N, d_model
         """
         batch_size, nodes, d_model = x.shape
-        w_Q = sp_W_Q_params.reshape(batch_size, d_model, self.n_heads * self.d_k)
-        w_K = sp_W_K_params.reshape(batch_size, d_model, self.n_heads * self.d_k)
-        w_V = sp_W_V_params.reshape(batch_size, d_model, self.n_heads * self.d_v)
+        w_Q = sp_W_Q_params.reshape(batch_size, nodes, d_model, self.n_heads * self.d_k)
+        w_K = sp_W_K_params.reshape(batch_size, nodes, d_model, self.n_heads * self.d_k)
+        w_V = sp_W_V_params.reshape(batch_size, nodes, d_model, self.n_heads * self.d_v)
         # B, H, N, d_k
-        input_Q = torch.einsum('b n d,b d h->b n h', x, w_Q).reshape(batch_size, nodes, self.n_heads,
+        input_Q = torch.einsum('b n d,b n d h->b n h', x, w_Q).reshape(batch_size, nodes, self.n_heads,
                                                                      self.d_k).transpose(1, 2)
-        input_K = torch.einsum('b n d,b d h->b n h', x, w_K).reshape(batch_size, nodes, self.n_heads,
+        input_K = torch.einsum('b n d,b n d h->b n h', x, w_K).reshape(batch_size, nodes, self.n_heads,
                                                                      self.d_k).transpose(1, 2)
-        input_V = torch.einsum('b n d,b d h->b n h', x, w_V).reshape(batch_size, nodes, self.n_heads,
+        input_V = torch.einsum('b n d,b n d h->b n h', x, w_V).reshape(batch_size, nodes, self.n_heads,
                                                                      self.d_v).transpose(1, 2)
 
         # B, H, N, N
@@ -99,7 +99,7 @@ class MultSpaceattention(nn.Module):
         STAM = torch.FloatTensor(self.STAM).cuda()
         # B, H, N, N
         B = self.softmax(A.mul(STAM))
-        B = self.dropout(B)
+        # B = self.dropout(B)
         # B, H, N, d_v
         output = torch.matmul(B, input_V)
         # B, N, H*d_v
@@ -109,139 +109,50 @@ class MultSpaceattention(nn.Module):
         return output
 
 
-class TSA(nn.Module):
-    def __init__(self, d_model, num_of_hour, d_k, d_v, n_heads, nodes):
-        super(TSA, self).__init__()
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.d_k = d_k
-        self.d_v = d_v
-        self.to_out = nn.Sequential(
-            nn.Linear(n_heads * d_v, nodes),
-            nn.Dropout(p=0.1)
-        )
-        self.relu = nn.ReLU()
-        self.softmax = nn.Softmax(dim=-1)
-        self.dropout = nn.Dropout(p=0.1)
-
-    def forward(self, x, time_W_U_params, time_W_V_params, time_W_Z_params):
-        """
-        :param x: B, T, d_model
-        :param time_U_params:B, d_model * n_heads * d_k
-        :param time_V_params:B, d_model * n_heads * d_k
-        :param time_Z_params:B, d_model * n_heads * d_v
-        :return:B,F,N,T
-        """
-        batch_size, num_of_hour, d_model = x.shape
-        w_Q = time_W_U_params.reshape(batch_size, d_model, self.n_heads * self.d_k)
-        w_K = time_W_V_params.reshape(batch_size, d_model, self.n_heads * self.d_k)
-        w_V = time_W_Z_params.reshape(batch_size, d_model, self.n_heads * self.d_v)
-        # B, H, T, d_k
-        input_Q = torch.einsum('b t d,b d h->b t h', x, w_Q).reshape(batch_size, num_of_hour, self.n_heads,
-                                                                     self.d_k).transpose(1, 2)
-        input_K = torch.einsum('b t d,b d h->b t h', x, w_K).reshape(batch_size, num_of_hour, self.n_heads,
-                                                                     self.d_k).transpose(1, 2)
-        input_V = torch.einsum('b t d,b d h->b t h', x, w_V).reshape(batch_size, num_of_hour, self.n_heads,
-                                                                     self.d_v).transpose(1, 2)
-        # B, H, T, T
-        A = torch.matmul(input_Q, input_K.transpose(-1, -2)) / np.sqrt(self.d_k)
-        B = self.softmax(A)
-        B = self.dropout(B)
-        # B, H, T, d_v
-        output = torch.matmul(B, input_V)
-        # B, T, H*d_v
-        output = output.transpose(1, 2).reshape(batch_size, num_of_hour, self.n_heads * self.d_v)
-        # B, F, N, T
-        output = self.to_out(output).transpose(-1, -2).unsqueeze(1)
-        return output
-
 class STAttentionfusion(nn.Module):
     def __init__(self, num_of_features, features_out, num_of_hour):
         super(STAttentionfusion, self).__init__()
         self.local_att1 = nn.Sequential(
-            nn.Conv2d(2, 32, kernel_size=1),
+            nn.Conv2d(1, 32, kernel_size=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, features_out, kernel_size=1),
             nn.LayerNorm(num_of_hour),
         )
 
-        self.global_att1 = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(2, 32, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, features_out, kernel_size=1),
-            nn.LayerNorm(1),
-        )
-
-        self.local_att2 = nn.Sequential(
-            nn.Conv2d(features_out, 32, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, features_out, kernel_size=1),
-            nn.LayerNorm(num_of_hour),
-        )
-
-        self.global_att2 = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(features_out, 32, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, features_out, kernel_size=1),
-            nn.LayerNorm(1),
-        )
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, GAU, SAT):
+    def forward(self, SAT):
         """
-        :param GAU: B, F, N, T
         :param SAT: B, F, N, T
         :return: B, F_out, N, T
         """
+        output = self.local_att1(SAT)  # B, F_out, N, T
 
-        ST = torch.cat([GAU, SAT], dim=1)  # B, 2F, N, T
-
-        xl = self.local_att1(ST)  # B, F_out, N, T
-        xg = self.global_att1(ST)  # B, F_out, 1, 1
-
-        xlg = xl + xg
-        xlg = self.sigmoid(xlg)  # B, F_out, N, T
-        mx = GAU * xlg + SAT * (1 - xlg)
-
-
-        xl2 = self.local_att2(mx)
-        xg2 = self.global_att2(mx)
-
-        xlg2 = xl2 + xg2
-        xlg2 = self.sigmoid(xlg2)
-        mx2 = GAU * xlg2 + SAT * (1 - xlg2)
-
-        return mx2
-
+        return output
 
 class create_model(nn.Module):
     def __init__(self, d_model, nodes, num_of_hour, num_of_features, d_k, d_v, n_heads, features_out,
                  time_features_out, STAM):
         super(create_model, self).__init__()
         self.Pos_Input = Pos_Input(d_model, nodes, num_of_hour, num_of_features)
-        self.TSA = TSA(d_model, num_of_hour, d_k, d_v, n_heads, nodes)
         self.SAT = MultSpaceattention(d_model, num_of_hour, d_k, d_v, n_heads, nodes, STAM)
         self.STF = STAttentionfusion(num_of_features, features_out, num_of_hour)
-        self.T_conv = nn.Conv2d(nodes, d_model, kernel_size=(1, num_of_features))
         self.S_conv = nn.Conv2d(num_of_hour, d_model, kernel_size=(1, num_of_features))
         self.x_conv = nn.Conv2d(num_of_features, features_out, kernel_size=1)
         self.relu = nn.ReLU()
         self.norm = nn.LayerNorm(num_of_hour)
         self.dropout = nn.Dropout(p=0.1)
 
-    def forward(self, x, time_W_U_params, time_W_V_params, time_W_Z_params, sp_W_Q_params, sp_W_K_params,
-                sp_W_V_params):
+    def forward(self, x, sp_W_Q_params, sp_W_K_params, sp_W_V_params):
 
         """
         :param x: B,F,N,T
-        :param time_U_params:B, d_model * n_heads * d_k
-        :param time_V_params:B, d_model * n_heads * d_k
-        :param time_Z_params:B, d_model * n_heads * d_v
-        :param sp_W_Q_params:B, d_model * n_heads * d_k
-        :param sp_W_K_params:B, d_model * n_heads * d_k
-        :param sp_W_V_params:B, d_model * n_heads * d_v
+        :param time_U_params:B, T, d_model*time_features_out
+        :param time_V_params:B, T, d_model*time_features_out
+        :param time_Z_params:B, T, d_model*time_features_out
+        :param sp_W_Q_params:B, N, d_model * n_heads * d_k
+        :param sp_W_K_params:B, N, d_model * n_heads * d_k
+        :param sp_W_V_params:B, N, d_model * n_heads * d_v
         :return: B, F_out, N, T
         """
         batch_size, num_of_features, nodes, num_of_hour = x.shape
@@ -252,16 +163,12 @@ class create_model(nn.Module):
             Tpos_x = x
             Spos_x = x
 
-        T_x = self.T_conv(Tpos_x.permute(0, 2, 3, 1))[:, :, :, -1].permute(0, 2, 1)  # B, T, d_model
         S_x = self.S_conv(Spos_x.permute(0, 3, 2, 1))[:, :, :, -1].permute(0, 2, 1)  # B, N, d_model
-        T_x = self.dropout(T_x)
         S_x = self.dropout(S_x)
-
-        TSA = self.TSA(T_x, time_W_U_params, time_W_V_params, time_W_Z_params)  # B, F, N, T
 
         SAT = self.SAT(S_x, sp_W_Q_params, sp_W_K_params, sp_W_V_params)  # B, F, N, T
 
-        STF = self.STF(TSA, SAT)
+        STF = self.STF(SAT)
 
         if num_of_features == 1:
             x_conv = self.x_conv(x)
@@ -290,31 +197,21 @@ class run_model(nn.Module):
         self.nodes = nodes
         self.memory_weight = self.construct_weight()
 
-        self.chunk_list = []
-        params_num = 0
+        self.space_chunk_list = []
+        space_params_num = 0
         for i in range(n_layer):
-            # time
-            Wgc = d_model * n_heads * d_k
-            self.chunk_list.append(Wgc)
-            params_num += Wgc
-            Wgc = d_model * n_heads * d_k
-            self.chunk_list.append(Wgc)
-            params_num += Wgc
-            Wgc = d_model * n_heads * d_v
-            self.chunk_list.append(Wgc)
-            params_num += Wgc
             # space
             Wgc = d_model * n_heads * d_k
-            self.chunk_list.append(Wgc)
-            params_num += Wgc
+            self.space_chunk_list.append(Wgc)
+            space_params_num += Wgc
             Wgc = d_model * n_heads * d_k
-            self.chunk_list.append(Wgc)
-            params_num += Wgc
+            self.space_chunk_list.append(Wgc)
+            space_params_num += Wgc
             Wgc = d_model * n_heads * d_v
-            self.chunk_list.append(Wgc)
-            params_num += Wgc
-        self.fgn = nn.Sequential(nn.Linear(in_features=memory_dim, out_features=128, bias=True),
-                                 nn.Linear(in_features=128, out_features=params_num, bias=True))
+            self.space_chunk_list.append(Wgc)
+            space_params_num += Wgc
+        self.space_fgn = nn.Sequential(nn.Linear(in_features=memory_dim, out_features=128, bias=True),
+                                       nn.Linear(in_features=128, out_features=space_params_num, bias=True))
 
         self.n_layer = n_layer
         self.conv = nn.Conv2d(num_of_hour * n_layer, 64, kernel_size=(1, features_out))
@@ -324,41 +221,34 @@ class run_model(nn.Module):
         memory_weight = nn.ParameterDict()
         memory_weight['memory'] = nn.Parameter(torch.randn(128, self.memory_dim), requires_grad=True)
         nn.init.xavier_normal_(memory_weight['memory'])
-        flat_hidden = self.num_of_hour * self.nodes
-        memory_weight['Wa'] = nn.Parameter(torch.randn(flat_hidden, self.memory_dim), requires_grad=True)
-        nn.init.xavier_normal_(memory_weight['Wa'])
+        memory_weight['space'] = nn.Parameter(torch.randn(self.num_of_hour, self.memory_dim), requires_grad=True)
+        nn.init.xavier_normal_(memory_weight['space'])
         return memory_weight
 
-    def query_weight(self, x):
+    def query_space_weight(self, x):
         """
         :param x: B, N, T
         """
-        ht = x.reshape(x.shape[0], -1)  # B,N*T
-        query = torch.matmul(ht, self.memory_weight['Wa'])  # B, memory_dim
-        att_score = torch.softmax(torch.matmul(query, self.memory_weight['memory'].t()), dim=-1)  # B, 64
-        att_memory = torch.matmul(att_score, self.memory_weight['memory'])  # B, memory_dim
+        query = torch.matmul(x, self.memory_weight['space'])  # B, N, memory_dim
+        att_score = torch.softmax(torch.matmul(query, self.memory_weight['memory'].t()), dim=-1)  # B, N, 64
+        att_memory = torch.matmul(att_score, self.memory_weight['memory'])  # B, N, memory_dim
 
-        params_flat = self.fgn(att_memory)
+        params_flat = self.space_fgn(att_memory)
 
-        params_list = torch.split(params_flat, self.chunk_list, dim=-1)
-        time_U_params = params_list[0::6]
-        time_V_params = params_list[1::6]
-        time_Z_params = params_list[2::6]
-        sp_Q_params = params_list[3::6]
-        sp_K_params = params_list[4::6]
-        sp_V_params = params_list[5::6]
-        return time_U_params, time_V_params, time_Z_params, sp_Q_params, sp_K_params, sp_V_params
+        params_list = torch.split(params_flat, self.space_chunk_list, dim=-1)
+        space_Q_params = params_list[0::3]
+        space_K_params = params_list[1::3]
+        space_V_params = params_list[2::3]
+        return space_Q_params, space_K_params, space_V_params
+
 
     def forward(self, x):
         output = []
-        time_U_params, time_V_params, time_Z_params, sp_Q_params, sp_K_params, sp_V_params = self.query_weight(x)
+        space_Q_params, space_K_params, space_V_params = self.query_space_weight(x)
         x = x.unsqueeze(1)
         for i in range(self.n_layer):
-            time_W_U_params, time_W_V_params, time_W_Z_params, sp_W_Q_params, sp_W_K_params, sp_W_V_params = \
-                time_U_params[i], time_V_params[i], time_Z_params[i], sp_Q_params[i], sp_K_params[i], sp_V_params[i]
-            x = self.model_list[i](x, time_W_U_params, time_W_V_params, time_W_Z_params, sp_W_Q_params,
-                                   sp_W_K_params, sp_W_V_params)
-
+            sp_W_Q_params, sp_W_K_params, sp_W_V_params = space_Q_params[i], space_K_params[i], space_V_params[i]
+            x = self.model_list[i](x, sp_W_Q_params, sp_W_K_params, sp_W_V_params)
             output.append(x)
 
         output = torch.cat(output, dim=-1)
