@@ -1,4 +1,4 @@
-# DPSN-STHA
+# DPSN-STHA: A Dynamic Perception Model of Similar Nodes with Spatial-Temporal Heterogeneity Attention for Traffic Flow Forecasting
 <p align="center">
   <img width="800" height="494" src="./graph/DPSN-STHA.svg" style="background-color: white;">
 </p>
