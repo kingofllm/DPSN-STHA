@@ -8,7 +8,7 @@ import json
 import shutil
 import torch.utils.data
 import torch.optim as optim
-from RemSTAM import run_model
+from model import run_model
 from prepareData import load_data
 from util import masked_mae, masked_mse, computer_loss
 # from utils import adj_weight_matrix, loadGraph, log_string
